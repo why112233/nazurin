@@ -1,74 +1,118 @@
-# -*- coding: utf-8 -*-
+import asyncio
+import os
 import shutil
 import traceback
-from html import escape
+from textwrap import dedent
 
-from aiogram.dispatcher.filters import IDFilter
-from aiogram.types import ChatActions, Message, Update
-from aiogram.utils.exceptions import TelegramAPIError
+from aiogram import flags
+from aiogram.enums import ChatAction
+from aiogram.exceptions import TelegramAPIError
+from aiogram.filters import Command, CommandObject
+from aiogram.types import ErrorEvent, Message
 from aiohttp import ClientResponseError
 
 from nazurin import config, dp
 from nazurin.utils import logger
-from nazurin.utils.decorators import chat_action
-from nazurin.utils.exceptions import NazurinError
+from nazurin.utils.decorators import Cache
+from nazurin.utils.exceptions import InvalidCommandUsageError, NazurinError
+from nazurin.utils.filters import IDFilter
+from nazurin.utils.helpers import format_error
 
-@dp.message_handler(commands=['start', 'help'])
-@chat_action(ChatActions.TYPING)
-async def show_help(message: Message):
-    await message.reply('''
-    小さな小さな賢将, can help you collect images from various sites.
-    Commands:
-    /ping - pong
-    /pixiv ARTWORK_ID - view pixiv artwork
-    /pixiv_download ARTWORK_ID - download pixiv artwork
-    /danbooru POST_ID - view danbooru post
-    /danbooru_download POST_ID - download danbooru post
-    /yandere POST_ID - view yandere post
-    /yandere_download POST_ID - download yandere post
-    /konachan POST_ID - view konachan post
-    /konachan_download POST_ID - download konachan post
-    /pixiv_bookmark ARTWORK_ID - bookmark pixiv artwork
-    /clear_cache - clear download cache
-    /help - get this help text
-    PS: Send Pixiv/Danbooru/Yandere/Konachan/Twitter URL to download image(s)
-    ''')
 
-@dp.message_handler(commands=['ping'])
-@chat_action(ChatActions.TYPING)
+@dp.message_handler(Command("start"), description="Get help")
+@flags.chat_action(ChatAction.TYPING)
+async def start(message: Message):
+    await show_help(message, None)
+
+
+@dp.message_handler(
+    Command("help"),
+    args="[COMMAND]",
+    description="Get help of all commands or a specific command",
+)
+@flags.chat_action(ChatAction.TYPING)
+async def show_help(message: Message, command: CommandObject):
+    if command and command.args:
+        help_text = dp.commands.help(command.args)
+        await message.reply(help_text or "Command not found.")
+        return
+    await message.reply(
+        dedent(
+            """
+            小さな小さな賢将, can help you collect images from various sites.
+
+            <b>Commands:</b>
+            """,
+        )
+        + dp.commands.help_text()
+        + dedent(
+            """
+
+            PS: Send a URL of supported sites to collect image(s)
+            """,
+        ),
+    )
+
+
+@dp.message_handler(Command("ping"), description="Pong")
 async def ping(message: Message):
-    await message.reply('pong!')
+    await message.reply("Pong!")
 
-@dp.message_handler(IDFilter(config.ADMIN_ID), commands=['clear_cache'])
+
+@dp.message_handler(
+    IDFilter(config.ADMIN_ID),
+    Command("set_commands"),
+    description="Set commands",
+)
+async def set_commands(message: Message):
+    await dp.bot.set_my_commands(list(dp.commands.list()))
+    await message.reply("Commands set successfully.")
+
+
+@dp.message_handler(
+    IDFilter(config.ADMIN_ID),
+    Command("clear_cache"),
+    description="Clear cache",
+)
 async def clear_cache(message: Message):
     try:
-        shutil.rmtree(config.TEMP_DIR)
+        if os.path.exists(config.TEMP_DIR):
+            shutil.rmtree(config.TEMP_DIR)
+        Cache.clear()
         await message.reply("Cache cleared successfully.")
     except PermissionError:
         await message.reply("Permission denied.")
     except OSError as error:
         await message.reply(error.strerror)
 
-@dp.errors_handler()
-async def on_error(update: Update, exception: Exception):
+
+@dp.error()
+async def on_error(event: ErrorEvent):
+    update = event.update
+    message = update.message
     try:
-        raise exception
+        raise event.exception
+    except InvalidCommandUsageError as error:
+        await message.reply(dp.commands.help(error.command))
     except ClientResponseError as error:
         traceback.print_exc()
-        await update.message.reply(
-            f'Response Error: {error.status} {error.message}')
+        await message.reply(f"Response Error: {error.status} {error.message}")
     except NazurinError as error:
-        await update.message.reply(error.msg)
-    except Exception as error:
-        logger.error('Update %s caused %s: %s', update, type(error), error)
+        await message.reply(error.msg)
+    except asyncio.TimeoutError:
         traceback.print_exc()
+        await message.reply("Error: Timeout, please try again.")
+    except Exception as error:  # pylint: disable=broad-except
+        logger.exception("Update {} caused {}: {}", update, type(error), error)
         if not isinstance(error, TelegramAPIError):
-            await update.message.reply('Error: ' +
-                                       escape(str(error), quote=False))
+            await message.reply(f"Error: {format_error(error)}")
+
     return True
+
 
 def main():
     dp.start()
 
-if __name__ == '__main__':
+
+if __name__ == "__main__":
     main()

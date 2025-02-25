@@ -3,11 +3,20 @@ from os import path
 from tinydb import Query, TinyDB
 
 from nazurin.config import DATA_DIR
+from nazurin.database import DatabaseDriver
+from nazurin.utils.helpers import ensure_existence
 
-class Local(object):
+
+class Local(DatabaseDriver):
     """Local database driver using TinyDB."""
+
+    def __init__(self):
+        ensure_existence(DATA_DIR)
+        self.db = None
+        self._key = None
+
     def collection(self, key):
-        self.db = TinyDB(path.join(DATA_DIR, key + '.json'))
+        self.db = TinyDB(path.join(DATA_DIR, key + ".json"))
         return self
 
     def document(self, key):
@@ -15,22 +24,25 @@ class Local(object):
         return self
 
     async def get(self):
-        Document = Query()
-        result = self.db.search(Document.key == self._key)
+        document = Query()
+        result = self.db.search(document.key == self._key)
         if result:
             return result[0]
-        else:
-            return None
+        return None
+
+    async def exists(self) -> bool:
+        document = Query()
+        return self.db.contains(document.key == self._key)
 
     async def insert(self, key, data):
         if key:
-            data['key'] = key
+            data["key"] = key
         return self.db.insert(data)
 
     async def update(self, data):
-        Document = Query()
-        return self.db.update(data, Document.key == self._key)
+        document = Query()
+        return self.db.update(data, document.key == self._key)
 
     async def delete(self):
-        Document = Query()
-        return self.db.remove(Document.key == self._key)
+        document = Query()
+        return self.db.remove(document.key == self._key)

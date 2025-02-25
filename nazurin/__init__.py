@@ -1,9 +1,11 @@
-from nazurin import config
+from nazurin.utils.logging import configure_logging
 
 from .bot import NazurinBot
 from .dispatcher import NazurinDispatcher
 
-bot = NazurinBot(token=config.TOKEN, proxy=config.PROXY)
+configure_logging()
+
+bot = NazurinBot()
 dp = NazurinDispatcher(bot)
 
-__all__ = ['bot', 'dp']
+__all__ = ["bot", "dp"]
